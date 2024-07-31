@@ -9,7 +9,7 @@ import re
 from typing import List
 
 # Remove all instances of these characters/patterns when cleaning data file
-EXCLUDE = r'_|`|\||~|§|\*|\d+|#||	||	|«|»|½|Ќ|€|№|¾|=|\(|\)|\[|\]|\{|\}|°|<|>|“|”|„|"|…|%'
+EXCLUDE = r'_|`|\||~|§|\*|\d+|#||	||	|«|»|½|Ќ|€|№|¾|=|\(|\)|\[|\]|\{|\}|°|<|>|“|”|„|"|…|%|\''
 # Exclude lines with these non-Russian characters in the cleaned data file
 FRENCH = set(
     'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghjklmnopqrstuvwxyzїÇÉÊÔÜßàáâäçèéêëíîïòóôöùúûüýœ')
