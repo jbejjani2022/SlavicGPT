@@ -55,8 +55,12 @@ def clean_text(data_file: str, output_file: str, russ_only: bool = True, preserv
         if preserve_blank and not line.strip():
             cleaned_lines.append(line)
             continue
-        # Remove leading whitespace
+        # Remove leading whitespace and leading "- "
         line = line.lstrip()
+        if line.startswith("- ") or line.startswith("– ") or line.startswith("— "):
+            line = line[2:]
+        elif line.startswith("-- "):
+            line = line[3:]
         # Don't add the line if it contains non-Russian
         if russ_only and not_russ(line):
             continue

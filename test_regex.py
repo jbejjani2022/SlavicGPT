@@ -15,3 +15,11 @@ text2 = re.sub(r'(?<!/)//(?!/)', '. ', text2)
 text2 = re.sub(r'(?<!/)/(?!/)', '', text2)
 
 print(text2)
+
+
+s = "- hello-my name is - joey"
+s = s[2:] if s.startswith("- ") else s
+print(s)
+
+ls = ["- ", "– ", "— "]
+print(set(ls))
