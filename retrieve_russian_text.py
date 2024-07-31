@@ -5,7 +5,15 @@ It then cleans the file to remove leading whitespace.
 """
 
 import os
+import re
 from typing import List
+
+# Remove all instances of these characters/patterns when cleaning data file
+EXCLUDE = r'_|`|\||~|§|\*|\d+|#||	||	|«|»|½|Ќ|€|№|¾|=|\(|\)|\[|\]|\{|\}|°|<|>|“|”|„|"|…|%'
+# Exclude lines with these non-Russian characters in the cleaned data file
+FRENCH = set(
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghjklmnopqrstuvwxyzїÇÉÊÔÜßàáâäçèéêëíîïòóôöùúûüýœ')
+GREEK = set('ΕΘΚΠΣάέήίαβγδεηικλμνοπρςστυφψωόύώϑѣἀἁἃἄἈἐἔἡἴἷἹὁὄὐὑὰὴὶὸᾶῆ῎ῖῦῶῷ')
 
 
 # Recursively walk through `data_folder`, reading text and writing to the `output_file`
@@ -36,18 +44,45 @@ def retrieve_text(
                         outfile.write('\n')
 
 
-# Remove leading whitespaces from all lines in input text file
-def clean_text(data_file: str, output_file: str) -> None:
+# Remove leading whitespaces from all lines in input text file and exclude garbage characters
+# Remove lines with french or greek characters if russ_only is True
+# Keep blank lines if preserve_blank is True
+def clean_text(data_file: str, output_file: str, russ_only: bool = True, preserve_blank: bool = False) -> None:
     with open(data_file, 'r', encoding='utf-8') as infile:
         lines = infile.readlines()
-    cleaned_lines = [line.lstrip() if line.strip() else line for line in lines]
+    cleaned_lines = []
+    for line in lines:
+        if preserve_blank and not line.strip():
+            cleaned_lines.append(line)
+            continue
+        # Remove leading whitespace
+        line = line.lstrip()
+        # Don't add the line if it contains non-Russian
+        if russ_only and not_russ(line):
+            continue
+        # Remove all instances of patterns in EXCLUDE
+        clean_line = re.sub(EXCLUDE, '', line)
+        # Replace '//' with '. '
+        clean_line = re.sub(r'(?<!/)//(?!/)', '. ', clean_line)
+        # Replace '/' with ''
+        clean_line = re.sub(r'(?<!/)/(?!/)', '', clean_line)
+
+        cleaned_lines.append(clean_line)
 
     with open(output_file, 'w') as outfile:
         outfile.writelines(cleaned_lines)
 
 
+# Check whether the line of text contains any French or Greek
+def not_russ(line):
+    for c in line:
+        if c in FRENCH or c in GREEK:
+            return True
+    return False
+
+
 if __name__ == '__main__':
     data_folder = 'data/tiny-russian-lit'
-    retrieve_text(data_folder, 'data/tiny-russian-lit/tiny_russian_lit.txt')
+    # retrieve_text(data_folder, 'data/tiny-russian-lit/tiny_russian_lit.txt')
     clean_text('data/tiny-russian-lit/tiny_russian_lit.txt',
-               'data/tiny-russian-lit/cleaned_tiny_russian_lit.txt')
+               'data/tiny-russian-lit/very_clean_tiny_russian_lit.txt')
