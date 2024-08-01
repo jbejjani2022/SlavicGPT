@@ -2,20 +2,33 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+# set random seed for reproducibility
 torch.manual_seed(3)
+
+# set hyperparameters
+split = 0.8  # the percentage of the dataset to be used for training - remaining is used for valdiation
+batch_size = 32  # the number of independent sequences that we will process in parallel
+block_size = 8  # maximum context length for predictions
+learning_rate = 1e-2
+max_iters = 3000  # number of training steps
+eval_interval = 300  # how often to evaluate the loss
+eval_iters = 200  # number of batches to be evaluated during loss estimation
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # path to data file
 data_path = 'data/tiny-russian-lit/very_clean_tiny_russian_lit.txt'
 
+# read in data
 with open(data_path, 'r', encoding='utf-8') as f:
     text = f.read()
 
 # find the unique characters that occur in the text
-chars = set(text)
+chars = sorted(list(set(text)))
 vocab = ''.join(chars)
 vocab_size = len(chars)
 
-# create a simple character-level tokenizer: a mapping from characters to integers
+# create a simple character-level tokenizer:
+# a mapping from characters to integers
 stoi = {ch: i for i, ch in enumerate(chars)}
 itos = {i: ch for i, ch in enumerate(chars)}
 
@@ -26,32 +39,46 @@ def encode(s): return [stoi[c] for c in s]
 def decode(l): return ''.join([itos[i] for i in l])
 
 
-data = torch.tensor(encode(text), dtype=torch.long)
-
 # split data into train and validation sets to test for overfitting
-split = 0.8
+data = torch.tensor(encode(text), dtype=torch.long)
 n = int(split*len(data))
 train_data = data[:n]
 val_data = data[n:]
 
-batch_size = 4  # the number of independent sequences that we will process in parallel
-block_size = 8  # maximum context length for predictions
 
-
+# data loading
 def get_batch(split):
-    # generate a batch of data consisting of inputs x and targets y
+    """Generate a batch of data consisting of inputs x and targets y."""
     data = train_data if split == 'train' else val_data
-    # generate batch_size random offsets in the interval [0, len(data) - batch_size)
+    # generate `batch_size` random offsets in the interval [0, len(data) - batch_size)
     ix = torch.randint(len(data) - block_size, (batch_size,))
     x = torch.stack([data[i:i+block_size] for i in ix])
     y = torch.stack([data[i+1:i+block_size+1] for i in ix])
+    x, y = x.to(device), y.to(device)
     return x, y
 
 
-xb, yb = get_batch('train')
+@torch.no_grad()  # avoids unnecessarily allocating memory for storing gradients; we will not backprop. losses computed during evaluation, so we don't need PyTorch to track operations
+def estimate_loss():
+    """Evaluate the model on the train and val sets.
+    Estimates the loss because we only evaluate `eval_iters`
+    random batches from each of the train and val sets.
+    """
+    out = {}
+    model.eval()  # doesn't actually do anything for the bigram, which behaves the same in evaluation and training mode since there are no dropout and batchnorm layers - but will be necessary for transformer
+    for split in ['train', 'val']:
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = get_batch(split)
+            logits, loss = model(X, Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean()
+    model.train()
+    return out
 
 
 class BigramLanguageModel(nn.Module):
+
     def __init__(self, vocab_size):
         super().__init__()
         # each token reads off the logits (input to softmax) for the next token from a lookup table
@@ -96,35 +123,40 @@ class BigramLanguageModel(nn.Module):
 
     # sample text by generating new tokens and decoding to characters
     # by default, the context used to generate the first new token is a newline char
-    def sample_text(self, context=torch.tensor([encode('\n')]), new_tokens=250):
+    def sample_text(self, context=torch.tensor([encode('\n')], device=device), new_tokens=250):
         print(f'Context: {decode(context[0].tolist())}')
         sample = self.generate(context, new_tokens)
         text = decode(sample[0].tolist())
-        print(f'Sample: {text}')
+        print(f'Sample: {text}\n')
 
 
-model = BigramLanguageModel(vocab_size)
-logits, loss = model(xb, yb)
-
-model.sample()
+model = BigramLanguageModel(vocab_size).to(device)
+# generate text from untrained model
+print(f'\nSample text generation from untrained bigram')
+print('-' * 50)
+model.sample_text()
 
 # typical lr setting is 3e-4, but for small models we can use a much higher lr
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
 # training loop
-batch_size = 32  # ??
-num_steps = 10000
-for step in range(num_steps):
+for iter in range(max_iters):
+    # periodically get the loss on train and val sets
+    if (iter + 1) % eval_interval == 0:
+        losses = estimate_loss()
+        print(
+            f"step {iter + 1}/{max_iters}: train loss = {losses['train']:.4f}, val loss = {losses['val']:.4f}")
+
     # sample a batch of data
     xb, yb = get_batch('train')
 
-    # evaluate the loss
+    # evaluate the loss and update parameters
     logits, loss = model(xb, yb)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
 
-    if step == 0 or step == num_steps - 1:
-        print(loss.item())
-
-model.sample()
+# generate text from the trained model
+print(f'\nSample text generation from trained bigram')
+print('-' * 50)
+model.sample_text()
