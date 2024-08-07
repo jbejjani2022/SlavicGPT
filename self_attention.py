@@ -9,9 +9,9 @@ torch.manual_seed(3)
 split = 0.8  # the percentage of the dataset to be used for training - remaining is used for valdiation
 batch_size = 32  # the number of independent sequences that we will process in parallel
 block_size = 8  # maximum context length for predictions
-learning_rate = 1e-2
-max_iters = 3000  # number of training steps
-eval_interval = 300  # how often to evaluate the loss
+learning_rate = 1e-3
+max_iters = 5000  # number of training steps
+eval_interval = 500  # how often to evaluate the loss
 eval_iters = 200  # number of batches to be evaluated during loss estimation
 n_embd = 32  # number of embedding dimensions
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -78,6 +78,32 @@ def estimate_loss():
     return out
 
 
+class Head(nn.Module):
+    """A single head of self-attention."""
+
+    def __init__(self, head_size):
+        super().__init__()
+        self.key = nn.Linear(n_embd, head_size, bias=False)
+        self.query = nn.Linear(n_embd, head_size, bias=False)
+        self.value = nn.Linear(n_embd, head_size, bias=False)
+        self.register_buffer('tril', torch.tril(
+            torch.ones(block_size, block_size)))  # a buffer is not a parameter of the model
+
+    def forward(self, x):
+        B, T, C = x.shape
+        k = self.key(x)  # (B, T, C)
+        q = self.query(x)  # (B, T, C)
+        # compute attention scores i.e. "affinities" between each query and key
+        # (B, T, C) @ (B, C, T) -> (B, T, T)
+        wei = q @ k.transpose(-2, -1) * C**-0.5
+        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        wei = F.softmax(wei, dim=-1)  # (B, T, T)
+        # perform weighted aggregation of values
+        v = self.value(x)  # (B, T, C)
+        out = wei @ v  # (B, T, T) @ (B, T, C) -> (B, T, C)
+        return out
+
+
 class BigramLanguageModel(nn.Module):
 
     def __init__(self):
@@ -86,6 +112,8 @@ class BigramLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         # each position/timestep in a given block gets its own embedding vector
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        # self-attention head
+        self.sa_head = Head(n_embd)
         # language modeling head: maps token embeddings to logits
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
@@ -97,6 +125,7 @@ class BigramLanguageModel(nn.Module):
             torch.arange(T, device=device))  # (T, n_embd)
         # (B, T, C) - PyTorch broadcasts the pos_emb across batch dim
         x = tok_emb + pos_emb
+        x = self.sa_head(x)  # (B, T, C)
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         if targets is None:
@@ -118,8 +147,10 @@ class BigramLanguageModel(nn.Module):
         # the bigram only uses the last char as the context
         # we pass in the full context here as practice for generation using transformer
         for _ in range(max_new_tokens):
+            # crop idx to the last block_size tokens, since pos_emb only has embeddings for the last block_size tokens
+            idx_cond = idx[:, -block_size:]
             # get predictions
-            logits, loss = self(idx)  # calls the forward function
+            logits, loss = self(idx_cond)  # calls the forward function
             # retrieve only final timestep
             logits = logits[:, -1, :]  # (B, T, C) -> (B, C)
             # apply softmax to get probability distribution
@@ -139,7 +170,7 @@ class BigramLanguageModel(nn.Module):
         print(f'Sample: {text}\n')
 
 
-model = BigramLanguageModel(vocab_size).to(device)
+model = BigramLanguageModel().to(device)
 # generate text from untrained model
 print(f'\nSample text generation from untrained bigram')
 print('-' * 50)
