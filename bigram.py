@@ -130,7 +130,7 @@ class BigramLanguageModel(nn.Module):
         print(f'Sample: {text}\n')
 
 
-model = BigramLanguageModel(vocab_size).to(device)
+model = BigramLanguageModel().to(device)
 # generate text from untrained model
 print(f'\nSample text generation from untrained bigram')
 print('-' * 50)
