@@ -107,15 +107,30 @@ class Head(nn.Module):
 
 class MultiHeadAttention(nn.Module):
     """Multiple heads of self-attention in parallel.
-    We run multiple heads in parallel and concatenate the results over the channel dimension.
-    Think of these heads as multiple independent channels of communication between tokens."""
+    Think of these heads as multiple independent channels of 
+    communication between tokens."""
 
     def __init__(self, num_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
 
     def forward(self, x):
+        # Run the heads in parallel and concatenate the results over the channel dimension
         return torch.cat([h(x) for h in self.heads], dim=-1)
+
+
+class FeedForward(nn.Module):
+    """A linear layer followed by a non-linearity."""
+
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, n_embd),
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        return self.net(x)
 
 
 class BigramLanguageModel(nn.Module):
@@ -128,6 +143,7 @@ class BigramLanguageModel(nn.Module):
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
         # self-attention multi-head
         self.sa_heads = MultiHeadAttention(heads, n_embd//heads)
+        self.ff = FeedForward(n_embd)
         # language modeling head: maps token embeddings to logits
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
@@ -140,6 +156,7 @@ class BigramLanguageModel(nn.Module):
         # (B, T, C) - PyTorch broadcasts the pos_emb across batch dim
         x = tok_emb + pos_emb
         x = self.sa_heads(x)  # (B, T, C)
+        x = self.ff(x)  # (B, T, C)
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         if targets is None:
