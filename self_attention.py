@@ -14,6 +14,7 @@ max_iters = 5000  # number of training steps
 eval_interval = 500  # how often to evaluate the loss
 eval_iters = 200  # number of batches to be evaluated during loss estimation
 n_embd = 32  # number of embedding dimensions
+heads = 4  # number of self-attention heads
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # path to data file
@@ -104,6 +105,19 @@ class Head(nn.Module):
         return out
 
 
+class MultiHeadAttention(nn.Module):
+    """Multiple heads of self-attention in parallel.
+    We run multiple heads in parallel and concatenate the results over the channel dimension.
+    Think of these heads as multiple independent channels of communication between tokens."""
+
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+
+    def forward(self, x):
+        return torch.cat([h(x) for h in self.heads], dim=-1)
+
+
 class BigramLanguageModel(nn.Module):
 
     def __init__(self):
@@ -112,8 +126,8 @@ class BigramLanguageModel(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         # each position/timestep in a given block gets its own embedding vector
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        # self-attention head
-        self.sa_head = Head(n_embd)
+        # self-attention multi-head
+        self.sa_heads = MultiHeadAttention(heads, n_embd//heads)
         # language modeling head: maps token embeddings to logits
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
@@ -125,7 +139,7 @@ class BigramLanguageModel(nn.Module):
             torch.arange(T, device=device))  # (T, n_embd)
         # (B, T, C) - PyTorch broadcasts the pos_emb across batch dim
         x = tok_emb + pos_emb
-        x = self.sa_head(x)  # (B, T, C)
+        x = self.sa_heads(x)  # (B, T, C)
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         if targets is None:
