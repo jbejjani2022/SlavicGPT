@@ -1,7 +1,7 @@
 """
 This script reads and retrieves all text from a root data folder containing
 many text files in different subdirs, concatenating their contents into a consolidated output text file.
-It then cleans the file to remove leading whitespace.
+It then cleans the file to remove leading whitespace and other garbage characters and patterns.
 """
 
 import os
