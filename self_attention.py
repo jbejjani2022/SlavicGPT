@@ -14,7 +14,8 @@ max_iters = 5000  # number of training steps
 eval_interval = 500  # how often to evaluate the loss
 eval_iters = 200  # number of batches to be evaluated during loss estimation
 n_embd = 32  # number of embedding dimensions
-heads = 4  # number of self-attention heads
+n_heads = 4  # number of self-attention heads per transformer block
+n_blocks = 3  # number of transformer blocks
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # path to data file
@@ -133,17 +134,36 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 
+class Block(nn.Module):
+    """Transformer block: communication followed by computation."""
+
+    def __init__(self, n_embd, n_heads):
+        # n_embd: embedding dimension, n_heads: the number of heads of self-attention
+        super().__init__()
+        head_size = n_embd // n_heads
+        # self-attention multi-head: 'communication'
+        self.sa_heads = MultiHeadAttention(n_heads, head_size)
+        # feedforward: 'computation'
+        self.ff = FeedForward(n_embd)
+
+    def forward(self, x):
+        x = self.sa_heads(x)
+        x = self.ff(x)
+        return x
+
+
 class BigramLanguageModel(nn.Module):
 
-    def __init__(self):
+    def __init__(self, h=n_blocks):
+        # h: the number of transformor blocks
         super().__init__()
         # each token reads off the logits (input to softmax) for the next token from a lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
-        # each position/timestep in a given block gets its own embedding vector
+        # each token position/timestep in a given block gets its own embedding vector
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        # self-attention multi-head
-        self.sa_heads = MultiHeadAttention(heads, n_embd//heads)
-        self.ff = FeedForward(n_embd)
+        # transformer blocks
+        self.blocks = nn.Sequential(
+            *[Block(n_embd, n_heads) for _ in range(h)])
         # language modeling head: maps token embeddings to logits
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
@@ -155,8 +175,7 @@ class BigramLanguageModel(nn.Module):
             torch.arange(T, device=device))  # (T, n_embd)
         # (B, T, C) - PyTorch broadcasts the pos_emb across batch dim
         x = tok_emb + pos_emb
-        x = self.sa_heads(x)  # (B, T, C)
-        x = self.ff(x)  # (B, T, C)
+        x = self.blocks(x)  # (B, T, C)
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         if targets is None:
