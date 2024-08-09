@@ -33,14 +33,14 @@ logging.basicConfig(filename='gpt.log',
                     level=logging.INFO,  # The logging level
                     format='%(asctime)s - %(levelname)s - %(message)s')  # Format of each log entry
 
-logging.info(f"Found device '{device}'...")
+logging.info(f"Found device '{device}'")
 
 # Read in data
 logging.info(f'Reading text data from {data_path}')
 with open(data_path, 'r', encoding='utf-8') as f:
     text = f.read()
 
-logging.info(f'The input text data contains {len(text) / 1e6} million characters.')
+logging.info(f'The data file has {len(text) / 1e6} million characters.')
 
 # find the unique characters that occur in the text
 chars = sorted(list(set(text)))
@@ -62,6 +62,7 @@ def decode(l): return ''.join([itos[i] for i in l])
 
 # split data into train and validation sets to test for overfitting
 data = torch.tensor(encode(text), dtype=torch.long)
+logging.info(f'The data file has {len(data) / 1e6} million tokens.')  # for a character-level language model, num characters = num tokens
 n = int(split*len(data))
 train_data = data[:n]
 val_data = data[n:]
