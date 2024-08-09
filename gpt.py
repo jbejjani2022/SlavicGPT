@@ -36,14 +36,17 @@ logging.basicConfig(filename='gpt.log',
 logging.info(f"Found device '{device}'...")
 
 # Read in data
-logging.info(f'Reading data from {data_path}...')
+logging.info(f'Reading text data from {data_path}')
 with open(data_path, 'r', encoding='utf-8') as f:
     text = f.read()
 
+logging.info(f'The input text data contains {len(text) / 1e6} million characters.')
+
 # find the unique characters that occur in the text
 chars = sorted(list(set(text)))
-vocab = ''.join(chars)
 vocab_size = len(chars)
+
+logging.info(f'The vocabulary size is {vocab_size}.')
 
 # create a simple character-level tokenizer:
 # a mapping from characters to integers
@@ -250,6 +253,8 @@ class Transformer(nn.Module):
 
 
 model = Transformer().to(device)
+logging.info(f'The current model has {model.num_params() / 1e6} million parameters')
+
 # generate text from untrained model
 logging.info('\nSample text generated from untrained model \n' + '-' * 50)
 logging.info(f'{model.sample_text()}\n')
