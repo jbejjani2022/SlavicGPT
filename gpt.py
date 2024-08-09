@@ -305,6 +305,9 @@ def load_latest_checkpoint():
 # Training loop
 for i in range(max_iters):
     # periodically get the loss on train and val sets
+    if i == 0:
+        losses = estimate_loss()
+        logging.info(f"losses before training: train loss = {losses['train']:.4f}, val loss = {losses['val']:.4f}")
     if (i + 1) % eval_interval == 0:
         losses = estimate_loss()
         logging.info(f"step {i + 1}/{max_iters}: train loss = {losses['train']:.4f}, val loss = {losses['val']:.4f}")

@@ -4,13 +4,13 @@ Building, training, and fine-tuning of medium-sized GPTs on Russian text and Sla
 
 ### Initial experiments
 
-`dev.ipynb` contains my initial experiments with the bigram model, a simple baseline language model, as well as my exploration into developing a more powerful model that can capture more complex dependencies between tokens using self-attention.
+`dev.ipynb` contains my initial experiments with the bigram model, a simple baseline language model, as well as my exploration into developing a more powerful model that can capture more complex dependencies between tokens via self-attention.
 
 Then, in `gpt.py`, I took what I learned to build a character-level, transformer-decoder language model based on OpenAI's GPT architecture. I trained it on Russian text obtained from various genres and authors in the classic Russian literary canon—poetry, prose, and publicism from 12 different authors including Tolstoy, Dostoevsky, and Pushkin. I wrote `retrieve_russian_text.py` to process this set of literary works into one text file and clean it to remove garbage characters and sequences. I used my resulting `data/tiny-russian-lit/very_clean_tiny_russian_lit.txt` file as the dataset for this first experiment. This dataset has ~34.8 million characters (for a character-level model, this is also the total number of tokens) and a vocabulary size of 87.
 
 My GPT for this experiment had ~10.8 million parameters.
 
-Given a newline character as the starting context, the untrained model generated the following sample:
+Given a newline character as the starting context, the untrained model (validation loss ~4.6) generated the following sample:
 ```
 Т?лШ:д&;Нбл-—уЁпЮчЧ;кМлИыАлЦІ:аьлЫрЫгбБдлчІЖЫБдБ—хХы?дАЪЉ!ы?кГЮ́д
 І!ДДХ
