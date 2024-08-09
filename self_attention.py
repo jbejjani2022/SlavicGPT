@@ -16,6 +16,7 @@ eval_iters = 200  # number of batches to be evaluated during loss estimation
 n_embd = 32  # number of embedding dimensions
 n_heads = 4  # number of self-attention heads per transformer block
 n_blocks = 3  # number of transformer blocks
+dropout = 0.2  # dropout probability
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # path to data file
@@ -90,6 +91,7 @@ class Head(nn.Module):
         self.value = nn.Linear(n_embd, head_size, bias=False)
         self.register_buffer('tril', torch.tril(
             torch.ones(block_size, block_size)))  # a buffer is not a parameter of the model
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         B, T, C = x.shape
@@ -100,6 +102,7 @@ class Head(nn.Module):
         wei = q @ k.transpose(-2, -1) * C**-0.5
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
         wei = F.softmax(wei, dim=-1)  # (B, T, T)
+        wei = self.dropout(wei)
         # perform weighted aggregation of values
         v = self.value(x)  # (B, T, C)
         out = wei @ v  # (B, T, T) @ (B, T, C) -> (B, T, C)
@@ -115,11 +118,12 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
         self.proj = nn.Linear(n_embd, n_embd)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         # Run the heads in parallel and concatenate the results over the channel dimension
         out = torch.cat([h(x) for h in self.heads], dim=-1)
-        out = self.proj(out)
+        out = self.dropout(self.proj(out))
         return out
 
 
@@ -131,7 +135,8 @@ class FeedForward(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(n_embd, 4 * n_embd),
             nn.ReLU(),
-            nn.Linear(4 * n_embd, n_embd)
+            nn.Linear(4 * n_embd, n_embd),
+            nn.Dropout(dropout)
         )
 
     def forward(self, x):
@@ -149,16 +154,18 @@ class Block(nn.Module):
         self.sa_heads = MultiHeadAttention(n_heads, head_size)
         # feedforward: 'computation'
         self.ff = FeedForward(n_embd)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
 
     def forward(self, x):
-        x = x + self.sa_heads(x)
-        x = x + self.ff(x)
+        x = x + self.sa_heads(self.ln1(x))
+        x = x + self.ff(self.ln2(x))
         return x
 
 
 class BigramLanguageModel(nn.Module):
 
-    def __init__(self, h=n_blocks):
+    def __init__(self):
         # h: the number of transformor blocks
         super().__init__()
         # each token reads off the logits (input to softmax) for the next token from a lookup table
@@ -167,8 +174,9 @@ class BigramLanguageModel(nn.Module):
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
         # transformer blocks
         self.blocks = nn.Sequential(
-            *[Block(n_embd, n_heads) for _ in range(h)])
-        # language modeling head: maps token embeddings to logits
+            *[Block(n_embd, n_heads) for _ in range(n_blocks)])
+        self.ln_f = nn.LayerNorm(n_embd)  # final layer norm
+        # language modeling head: maps final token embeddings to logits
         self.lm_head = nn.Linear(n_embd, vocab_size)
 
     def forward(self, idx, targets=None):
@@ -180,6 +188,7 @@ class BigramLanguageModel(nn.Module):
         # (B, T, C) - PyTorch broadcasts the pos_emb across batch dim
         x = tok_emb + pos_emb
         x = self.blocks(x)  # (B, T, C)
+        x = self.ln_f(x)  # (B, T, C)
         logits = self.lm_head(x)  # (B, T, vocab_size)
 
         if targets is None:
