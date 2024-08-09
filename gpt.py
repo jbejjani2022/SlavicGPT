@@ -1,3 +1,5 @@
+import os
+import logging
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -6,23 +8,35 @@ from torch.nn import functional as F
 torch.manual_seed(3)
 
 # set hyperparameters
-split = 0.8  # the percentage of the dataset to be used for training - remaining is used for valdiation
+split = 0.8  # the percentage of the dataset to be used for training - rest is used for valdiation
 batch_size = 64  # the number of independent sequences that we will process in parallel
 block_size = 256  # maximum context length for predictions
 learning_rate = 3e-4
 max_iters = 5000  # number of training steps
 eval_interval = 500  # how often to evaluate the loss
 eval_iters = 200  # number of batches to be evaluated during loss estimation
+save_interval = 1000  # how often to save a model checkpoint
 n_embd = 384  # number of embedding dimensions
 n_heads = 6  # number of self-attention heads per transformer block
 n_blocks = 6  # number of transformer blocks
 dropout = 0.2  # dropout probability
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 
 # path to data file
 data_path = 'data/tiny-russian-lit/very_clean_tiny_russian_lit.txt'
+# path to model checkpoints
+checkpoint_dir = "./checkpoints"
 
-# read in data
+# Configure logging to an output file
+logging.basicConfig(filename='gpt.log', 
+                    filemode='a',  # appends to previous logs
+                    level=logging.INFO,  # The logging level
+                    format='%(asctime)s - %(levelname)s - %(message)s')  # Format of each log entry
+
+logging.info(f"Found device '{device}'...")
+
+# Read in data
+logging.info(f'Reading data from {data_path}...')
 with open(data_path, 'r', encoding='utf-8') as f:
     text = f.read()
 
@@ -163,12 +177,10 @@ class Block(nn.Module):
         return x
 
 
-class GPT(nn.Module):
-    """The full GPT language model, with:
-    token embedding, position embedding, transformer blocks, layernorm, and language model head """
+class Transformer(nn.Module):
+    """A decoder-only transformer for generating text."""
 
     def __init__(self):
-        # h: the number of transformor blocks
         super().__init__()
         # each token reads off the logits (input to softmax) for the next token from a lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
@@ -227,39 +239,82 @@ class GPT(nn.Module):
     # sample text by generating new tokens and decoding to characters
     # by default, the context used to generate the first new token is a newline char
     def sample_text(self, context=torch.tensor([encode('\n')], device=device), new_tokens=250):
-        print(f'Context: {decode(context[0].tolist())}')
+        logging.info(f'Context: {decode(context[0].tolist())}')
         sample = self.generate(context, new_tokens)
         text = decode(sample[0].tolist())
-        print(f'Sample: {text}\n')
+        return text
+        
+    def num_params(self):
+        # Calculate total number of parameters in the model
+        return sum(p.numel() for p in self.parameters())
 
 
-model = GPT().to(device)
+model = Transformer().to(device)
 # generate text from untrained model
-print(f'\nSample text generation from untrained model')
-print('-' * 50)
-model.sample_text()
+logging.info('\nSample text generated from untrained model \n' + '-' * 50)
+logging.info(f'{model.sample_text()}\n')
 
 # typical lr setting is 3e-4, but for small models we can use a much higher lr
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
-# training loop
-for iter in range(max_iters):
-    # periodically get the loss on train and val sets
-    if (iter + 1) % eval_interval == 0:
-        losses = estimate_loss()
-        print(
-            f"step {iter + 1}/{max_iters}: train loss = {losses['train']:.4f}, val loss = {losses['val']:.4f}")
 
+def save_checkpoint(i):
+    """Save model checkpoint at training step i."""
+    model_path = f"{checkpoint_dir}/step_{i}.pt"
+    os.makedirs(os.path.dirname(model_path), exist_ok=True) 
+    torch.save({
+                'step': i,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict()
+                }, model_path)
+    logging.info(f'Saved model checkpoint to {model_path}')
+    
+    
+def load_latest_checkpoint():
+    """Load the latest model checkpoint found in the checkpoints dir."""
+    if not os.path.exists(checkpoint_dir):
+        logging.error(f"Checkpoint directory '{checkpoint_dir}' does not exist.")
+        return
+    # Get all the checkpoint files
+    checkpoints = [f for f in os.listdir(checkpoint_dir) if f.endswith(".pt")]
+    if not checkpoints:
+        logging.warning("No checkpoints available.")
+        return
+    # Sort the checkpoints based on the training step number in their filenames
+    # Each checkpoint is 'step_i.pt', where i is the training step number
+    checkpoints.sort(key=lambda x: (int(x.split('.')[0][-1])))
+    # Get the path of the latest checkpoint
+    latest_checkpoint = os.path.join(checkpoint_dir, checkpoints[-1])
+    # Load the checkpoint
+    logging.info(f"Loading the latest checkpoint, found at {latest_checkpoint}")
+    checkpoint = torch.load(latest_checkpoint)
+    # Load the model and optimizer states
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])  # so we can resume training from the checkpoint
+
+
+# Load the latest checkpoint
+# load_latest_checkpoint()
+
+# Training loop
+for i in range(max_iters):
+    # periodically get the loss on train and val sets
+    if (i + 1) % eval_interval == 0:
+        losses = estimate_loss()
+        logging.info(f"step {i + 1}/{max_iters}: train loss = {losses['train']:.4f}, val loss = {losses['val']:.4f}")
+    # periodically save model checkpoint
+    if (i + 1) % save_interval == 0:
+        save_checkpoint(i)
+    
     # sample a batch of data
     xb, yb = get_batch('train')
-
     # evaluate the loss and update parameters
     logits, loss = model(xb, yb)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
 
+
 # generate text from the trained model
-print(f'\nSample text generation from trained model')
-print('-' * 50)
-model.sample_text()
+logging.info('\nSample text generated from trained model \n' + '-' * 50)
+logging.info(f'{model.sample_text(new_tokens=10000)}\n')
