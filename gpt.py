@@ -7,15 +7,15 @@ torch.manual_seed(3)
 
 # set hyperparameters
 split = 0.8  # the percentage of the dataset to be used for training - remaining is used for valdiation
-batch_size = 32  # the number of independent sequences that we will process in parallel
-block_size = 8  # maximum context length for predictions
-learning_rate = 1e-3
+batch_size = 64  # the number of independent sequences that we will process in parallel
+block_size = 256  # maximum context length for predictions
+learning_rate = 3e-4
 max_iters = 5000  # number of training steps
 eval_interval = 500  # how often to evaluate the loss
 eval_iters = 200  # number of batches to be evaluated during loss estimation
-n_embd = 32  # number of embedding dimensions
-n_heads = 4  # number of self-attention heads per transformer block
-n_blocks = 3  # number of transformer blocks
+n_embd = 384  # number of embedding dimensions
+n_heads = 6  # number of self-attention heads per transformer block
+n_blocks = 6  # number of transformer blocks
 dropout = 0.2  # dropout probability
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -69,7 +69,7 @@ def estimate_loss():
     random batches from each of the train and val sets.
     """
     out = {}
-    model.eval()  # doesn't actually do anything for the bigram, which behaves the same in evaluation and training mode since there are no dropout and batchnorm layers - but will be necessary for transformer
+    model.eval()
     for split in ['train', 'val']:
         losses = torch.zeros(eval_iters)
         for k in range(eval_iters):
@@ -163,7 +163,9 @@ class Block(nn.Module):
         return x
 
 
-class BigramLanguageModel(nn.Module):
+class GPT(nn.Module):
+    """The full GPT language model, with:
+    token embedding, position embedding, transformer blocks, layernorm, and language model head """
 
     def __init__(self):
         # h: the number of transformor blocks
@@ -207,8 +209,6 @@ class BigramLanguageModel(nn.Module):
 
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current context
-        # the bigram only uses the last char as the context
-        # we pass in the full context here as practice for generation using transformer
         for _ in range(max_new_tokens):
             # crop idx to the last block_size tokens, since pos_emb only has embeddings for the last block_size tokens
             idx_cond = idx[:, -block_size:]
@@ -233,9 +233,9 @@ class BigramLanguageModel(nn.Module):
         print(f'Sample: {text}\n')
 
 
-model = BigramLanguageModel().to(device)
+model = GPT().to(device)
 # generate text from untrained model
-print(f'\nSample text generation from untrained bigram')
+print(f'\nSample text generation from untrained model')
 print('-' * 50)
 model.sample_text()
 
@@ -260,6 +260,6 @@ for iter in range(max_iters):
     optimizer.step()
 
 # generate text from the trained model
-print(f'\nSample text generation from trained bigram')
+print(f'\nSample text generation from trained model')
 print('-' * 50)
 model.sample_text()
