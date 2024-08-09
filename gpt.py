@@ -178,7 +178,7 @@ class Block(nn.Module):
 
 
 class Transformer(nn.Module):
-    """A decoder-only transformer for generating text."""
+    """A decoder-only transformer for generating text, as done in OpenAI's GPT."""
 
     def __init__(self):
         super().__init__()
