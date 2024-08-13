@@ -1,6 +1,9 @@
 # model checkpoints
 checkpoints/
 
+# web scraper output files
+scrape/*.txt
+
 todo.txt
 .DS_Store
 
