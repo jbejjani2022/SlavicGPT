@@ -1,6 +1,6 @@
 """
-A RedditScraper class for retrieving comments from posts or entire subreddits
-and writing to text files.
+A RedditScraper class for iterating through entire subreddits
+and retrieving comments from posts. To be used for collecting text data.
 """
 
 
