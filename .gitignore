@@ -2,7 +2,9 @@
 checkpoints/
 
 # web scraper output files
-scrape/*.txt
+scrape/data
+scrape/data_rus
+scrape/help.txt
 
 todo.txt
 .DS_Store

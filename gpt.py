@@ -40,13 +40,15 @@ logging.info(f'Reading text data from {data_path}')
 with open(data_path, 'r', encoding='utf-8') as f:
     text = f.read()
 
-logging.info(f'The data file has {len(text) / 1e6} million characters.')
+logging.info(f'The dataset is {len(text) / 1e6} million characters.')
 
 # find the unique characters that occur in the text
 chars = sorted(list(set(text)))
+vocab = ''.join(chars)
 vocab_size = len(chars)
 
-logging.info(f'The vocabulary size is {vocab_size}.')
+logging.info(f'Dataset vocabulary: {vocab}')
+logging.info(f'Vocabulary size: {vocab_size}')
 
 # create a simple character-level tokenizer:
 # a mapping from characters to integers
@@ -60,9 +62,9 @@ def encode(s): return [stoi[c] for c in s]
 def decode(l): return ''.join([itos[i] for i in l])
 
 
-# split data into train and validation sets to test for overfitting
+# split data into train and validation sets
 data = torch.tensor(encode(text), dtype=torch.long)
-logging.info(f'The data file has {len(data) / 1e6} million tokens.')  # for a character-level language model, num characters = num tokens
+logging.info(f'The dataset is {len(data) / 1e6} million tokens.')  # for a character-level language model, num characters = num tokens
 n = int(split*len(data))
 train_data = data[:n]
 val_data = data[n:]
@@ -181,7 +183,7 @@ class Block(nn.Module):
         return x
 
 
-class Transformer(nn.Module):
+class GPT(nn.Module):
     """A decoder-only transformer for generating text, as done in OpenAI's GPT."""
 
     def __init__(self):
@@ -253,7 +255,7 @@ class Transformer(nn.Module):
         return sum(p.numel() for p in self.parameters())
 
 
-model = Transformer().to(device)
+model = GPT().to(device)
 logging.info(f'The current model has {model.num_params() / 1e6} million parameters')
 
 # generate text from untrained model

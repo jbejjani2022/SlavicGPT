@@ -1,6 +1,6 @@
 """
 A RedditScraper class for iterating through entire subreddits
-and retrieving comments from posts. To be used for collecting text data.
+and retrieving comments from posts. To be used for collecting language data.
 """
 
 
@@ -112,7 +112,7 @@ if __name__ == '__main__':
     # url = 'https://www.reddit.com/r/interestingasfuck/comments/1eqjs5c/verne_troyer_posing_behind_one_of_shaquille/'
     # n = scraper.get_comments(url, 'test.txt')
     # print(f'{n} comments on {url}')
-    sub = 'interestingasfuck'
+    sub = 'pikabu'
     print(f'Exploring subreddit {sub}...')
     scraper.subreddit_info(sub)
     limit = 3
@@ -120,6 +120,6 @@ if __name__ == '__main__':
         print(f"Extracting comments from the first {limit} '{sort}' submissions in {sub}...")
         ids = scraper.subreddit_iterate(sub, sort, limit)
         for i, id in enumerate(ids):
-            outfile = f'{sort}_{i + 1}.txt'
+            outfile = f'data_rus/{sort}_{i + 1}.txt'
             print(f'{scraper.get_comments(outfile, id=id)} comments on post {id}')
     
