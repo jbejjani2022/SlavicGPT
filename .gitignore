@@ -9,6 +9,13 @@ scrape/help.txt
 # wandb logs
 wandb/
 
+# SLURM logs
+output/
+error/
+
+# input data files
+input/
+
 todo.txt
 .DS_Store
 
