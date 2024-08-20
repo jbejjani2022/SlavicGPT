@@ -1,11 +1,15 @@
 import os
+import time
 import logging
+from contextlib import nullcontext
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+import torch.distributed as dist
+from torch.utils.data.distributed import DistributedSampler as DS
+from torch.nn.parallel import DistributedDataParallel as DDP
 
-# set random seed for reproducibility
-torch.manual_seed(3)
 
 # set hyperparameters
 split = 0.8  # the percentage of the dataset to be used for training - rest is used for valdiation
@@ -20,35 +24,70 @@ n_embd = 384  # number of embedding dimensions
 n_heads = 6  # number of self-attention heads per transformer block
 n_blocks = 6  # number of transformer blocks
 dropout = 0.2  # dropout probability
-device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+out = 'gpt.log' # output log filename
+wandb_log = True  # log to wandb
+wandb_project = 'gpt'
+dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
+config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
+config = {k: globals()[k] for k in config_keys} # will be useful for wandb logging
 
 # path to data file
 data_path = 'data/tiny-russian-lit/very_clean_tiny_russian_lit.txt'
 # path to model checkpoints
-checkpoint_dir = "./checkpoints"
+checkpoint_dir = "./checkpoints2"
 
 # Configure logging to an output file
-logging.basicConfig(filename='gpt.log', 
+logging.basicConfig(filename=out, 
                     filemode='a',  # appends to previous logs
                     level=logging.INFO,  # The logging level
-                    format='%(asctime)s - %(levelname)s - %(message)s')  # Format of each log entry
+                    format='%(message)s')  # Format of each log entry
 
-logging.info(f"Found device '{device}'")
+ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
+logging.info(f'DDP run? {ddp}')
+
+if ddp:
+    dist.init_process_group(backend='nccl')
+    ddp_rank = int(os.environ['RANK'])
+    ddp_local_rank = int(os.environ['LOCAL_RANK'])
+    ddp_world_size = int(os.environ['WORLD_SIZE'])
+    device = f'cuda:{ddp_local_rank}'
+    torch.cuda.set_device(device)
+    master_process = ddp_rank == 0 # this process will do logging and checkpointing
+    seed_offset = ddp_rank # each process gets a different seed
+else:
+    # if not ddp, we are running on one gpu, one process
+    master_process = True
+    seed_offset = 0
+    ddp_world_size = 1
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    
+logging.info(f"{device} initialized")
+    
+if master_process:
+    logging.info(f'world size = {ddp_world_size}')
+    logging.info(f'using {dtype} data type')
+    tokens_per_iter = ddp_world_size * batch_size * block_size
+    logging.info(f"There will be {tokens_per_iter:,} tokens per iteration, for {max_iters} iterations")
+
+torch.manual_seed(3 + seed_offset)
+device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.autocast
+ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
+# initialize context for automatic mixed precision operations if training on gpu
+ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
 # Read in data
-logging.info(f'Reading text data from {data_path}')
 with open(data_path, 'r', encoding='utf-8') as f:
     text = f.read()
-
-logging.info(f'The dataset is {len(text) / 1e6} million characters.')
-
+    
 # find the unique characters that occur in the text
 chars = sorted(list(set(text)))
 vocab = ''.join(chars)
 vocab_size = len(chars)
 
-logging.info(f'Dataset vocabulary: {vocab}')
-logging.info(f'Vocabulary size: {vocab_size}')
+if master_process:
+    logging.info(f'{len(text) / 1e6} million characters loaded from dataset at {data_path}.')
+    logging.info(f'Dataset vocabulary: {vocab}')
+    logging.info(f'Vocabulary size: {vocab_size}')
 
 # create a simple character-level tokenizer:
 # a mapping from characters to integers
@@ -64,7 +103,8 @@ def decode(l): return ''.join([itos[i] for i in l])
 
 # split data into train and validation sets
 data = torch.tensor(encode(text), dtype=torch.long)
-logging.info(f'The dataset is {len(data) / 1e6} million tokens.')  # for a character-level language model, num characters = num tokens
+if master_process:
+    logging.info(f'The dataset is {len(data) / 1e6} million tokens.')  # for a character-level language model, num characters = num tokens
 n = int(split*len(data))
 train_data = data[:n]
 val_data = data[n:]
@@ -74,11 +114,14 @@ val_data = data[n:]
 def get_batch(split):
     """Generate a batch of data consisting of inputs x and targets y."""
     data = train_data if split == 'train' else val_data
-    # generate `batch_size` random offsets in the interval [0, len(data) - batch_size)
     ix = torch.randint(len(data) - block_size, (batch_size,))
     x = torch.stack([data[i:i+block_size] for i in ix])
     y = torch.stack([data[i+1:i+block_size+1] for i in ix])
-    x, y = x.to(device), y.to(device)
+    if device_type == 'cuda':
+        # pin arrays x, y, which allows us to move them to GPU asynchronously (non_blocking=True)
+        x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
+    else:
+        x, y = x.to(device), y.to(device)
     return x, y
 
 
@@ -256,14 +299,24 @@ class GPT(nn.Module):
 
 
 model = GPT().to(device)
-logging.info(f'The current model has {model.num_params() / 1e6} million parameters')
+# wrap model into DDP container
+if ddp:
+    model = DDP(model, device_ids=[ddp_local_rank])
 
-# generate text from untrained model
-logging.info('\nSample text generated from untrained model \n' + '-' * 50)
-logging.info(f'{model.sample_text()}\n')
+raw_model = model.module if ddp else model # unwrap DDP container if needed
 
-# typical lr setting is 3e-4, but for small models we can use a much higher lr
+if master_process:
+    logging.info(f'The language model has {model.num_params() / 1e6} million parameters.')
+    # generate text from untrained model
+    logging.info('\nSample text generated from untrained model \n' + '-' * 50)
+    logging.info(f'{model.sample_text()}\n')
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+# Initialize GradScaler. If enabled=False, scaler is a no-op
+enabled = dtype == 'float16'
+scaler = torch.cuda.amp.GradScaler(enabled=enabled)
+if master_process:
+    logging.info(f'scaler enabled? {enabled}')
 
 
 def save_checkpoint(i):
@@ -272,8 +325,9 @@ def save_checkpoint(i):
     os.makedirs(os.path.dirname(model_path), exist_ok=True) 
     torch.save({
                 'step': i,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict()
+                'model_state_dict': raw_model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'config': config,
                 }, model_path)
     logging.info(f'Saved model checkpoint to {model_path}')
     
@@ -301,31 +355,64 @@ def load_latest_checkpoint():
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])  # so we can resume training from the checkpoint
 
 
-# Load the latest checkpoint
+# Uncomment in order to resume training from the latest checkpoint
 # load_latest_checkpoint()
 
-# Training loop
+# wandb logging
+if wandb_log and master_process:
+    import wandb
+    logging.info(f'Initializing wandb...')
+    # Check if WANDB_RUN_NAME environment variable exists
+    wandb_run_name = os.getenv('WANDB_RUN_NAME', f'ddp_{wandb.util.generate_id()}')  # Default to 'DDP' if not set
+    wandb.init(project=wandb_project, name=wandb_run_name, config=config)
+    
+    
+# TRAINING LOOP
+X, Y = get_batch('train') # fetch the very first batch
+t0 = time.time()
 for i in range(max_iters):
     # periodically get the loss on train and val sets
-    if i == 0:
+    if master_process and (i == 0 or (i + 1) % eval_interval == 0):
         losses = estimate_loss()
-        logging.info(f"losses before training: train loss = {losses['train']:.4f}, val loss = {losses['val']:.4f}")
-    if (i + 1) % eval_interval == 0:
-        losses = estimate_loss()
-        logging.info(f"step {i + 1}/{max_iters}: train loss = {losses['train']:.4f}, val loss = {losses['val']:.4f}")
+        if i == 0:
+            logging.info(f"losses before training: train loss = {losses['train']:.4f}, val loss = {losses['val']:.4f}")
+        else:
+            logging.info(f"step {i + 1}/{max_iters}: train loss = {losses['train']:.4f}, val loss = {losses['val']:.4f}")
+        if wandb_log:
+            wandb.log({
+                "iter": i,
+                "train/loss": losses['train'],
+                "val/loss": losses['val'],
+            })
+
     # periodically save model checkpoint
-    if (i + 1) % save_interval == 0:
+    if master_process and (i + 1) % save_interval == 0:
         save_checkpoint(i)
     
-    # sample a batch of data
-    xb, yb = get_batch('train')
-    # evaluate the loss and update parameters
-    logits, loss = model(xb, yb)
+    with ctx:
+        logits, loss = model(X, Y)
+    
+    # immediately async prefetch next batch while model is doing the forward pass on the GPU
+    X, Y = get_batch('train')
+    # backward pass, with gradient scaling if training in fp16
+    scaler.scale(loss).backward()
+    # step the optimizer and scaler if training in fp16
+    scaler.step(optimizer)
+    scaler.update()
+    # flush the gradients
     optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    optimizer.step()
 
+# timing
+t1 = time.time()
+dt = t1 - t0
+if master_process:
+    logging.info(f'Total training time: {dt/1e6:.2f}s')
+    # Generate text from the trained model
+    logging.info('\nSample text generated from trained model \n' + '-' * 50)
+    logging.info(f'{model.sample_text()}\n')
 
-# generate text from the trained model
-logging.info('\nSample text generated from trained model \n' + '-' * 50)
-logging.info(f'{model.sample_text(new_tokens=10000)}\n')
+# Destroy processes
+if wandb_log:
+    wandb.finish()
+if ddp:
+    dist.destroy_process_group()

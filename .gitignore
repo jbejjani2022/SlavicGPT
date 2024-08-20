@@ -6,6 +6,9 @@ scrape/data
 scrape/data_rus
 scrape/help.txt
 
+# wandb logs
+wandb/
+
 todo.txt
 .DS_Store
 
