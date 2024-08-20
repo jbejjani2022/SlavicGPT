@@ -7,22 +7,21 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import torch.distributed as dist
-from torch.utils.data.distributed import DistributedSampler as DS
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 
 # set hyperparameters
-split = 0.8  # the percentage of the dataset to be used for training - rest is used for valdiation
+split = 0.9  # the percentage of the dataset to be used for training - rest is used for valdiation
 batch_size = 64  # the number of independent sequences that we will process in parallel
 block_size = 256  # maximum context length for predictions
 learning_rate = 3e-4
-max_iters = 5000  # number of training steps
+max_iters = 6000  # number of training steps
 eval_interval = 500  # how often to evaluate the loss
 eval_iters = 200  # number of batches to be evaluated during loss estimation
 save_interval = 1000  # how often to save a model checkpoint
 n_embd = 384  # number of embedding dimensions
 n_heads = 6  # number of self-attention heads per transformer block
-n_blocks = 6  # number of transformer blocks
+n_blocks = 6  # number of transformer blocks/layers
 dropout = 0.2  # dropout probability
 out = 'gpt.log' # output log filename
 wandb_log = True  # log to wandb
@@ -74,7 +73,7 @@ else:
     ddp_world_size = 1
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     
-torch.manual_seed(3 + seed_offset)    
+torch.manual_seed(3 + seed_offset)
 
 if master_process:
     logging.info(f'DDP run? {ddp}')
@@ -100,7 +99,7 @@ vocab = ''.join(chars)
 vocab_size = len(chars)
 
 if master_process:
-    logging.info(f'{len(text) / 1e6} million characters loaded from the {dataset} dataset.')
+    logging.info(f'{len(text) / 1e6} million characters loaded from the {dataset} dataset')
     logging.info(f'Dataset vocabulary: {vocab}')
     logging.info(f'Vocabulary size: {vocab_size}')
 
@@ -138,25 +137,6 @@ def get_batch(split):
     else:
         x, y = x.to(device), y.to(device)
     return x, y
-
-
-@torch.no_grad()  # avoids unnecessarily allocating memory for storing gradients; we will not backprop. losses computed during evaluation, so we don't need PyTorch to track operations
-def estimate_loss():
-    """Evaluate the model on the train and val sets.
-    Estimates the loss because we only process `eval_iters`
-    random batches from each of the train and val sets.
-    """
-    out = {}
-    model.eval()
-    for split in ['train', 'val']:
-        losses = torch.zeros(eval_iters)
-        for k in range(eval_iters):
-            X, Y = get_batch(split)
-            logits, loss = model(X, Y)
-            losses[k] = loss.item()
-        out[split] = losses.mean()
-    model.train()
-    return out
 
 
 class Head(nn.Module):
@@ -325,15 +305,34 @@ if master_process:
 # Wrap model into DDP container
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
-
 raw_model = model.module if ddp else model # unwrap DDP container if needed
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+
 # Initialize GradScaler. If enabled=False, scaler is a no-op
 enabled = dtype == 'float16'
 scaler = torch.cuda.amp.GradScaler(enabled=enabled)
 if master_process:
     logging.info(f'GradScaler enabled? {enabled}')
+    
+    
+@torch.no_grad()  # avoids unnecessarily allocating memory for storing gradients; we will not backprop. losses computed during evaluation, so we don't need PyTorch to track operations
+def estimate_loss():
+    """Evaluate the model on the train and val sets.
+    Estimates the loss because we only process `eval_iters`
+    random batches from each of the train and val sets.
+    """
+    out = {}
+    model.eval()
+    for split in ['train', 'val']:
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = get_batch(split)
+            logits, loss = model(X, Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean()
+    model.train()
+    return out
 
 
 def save_checkpoint(i):
@@ -349,8 +348,10 @@ def save_checkpoint(i):
     logging.info(f'Saved model checkpoint to {model_path}')
     
     
-def load_latest_checkpoint():
-    """Load the latest model checkpoint found in the checkpoints dir."""
+def load_checkpoint(i=None):
+    """Load a model checkpoint from the checkpoints dir.
+    If `i` provided, loads checkpoint step_i.pt if it exists.
+    Otherwise, loads the latest checkpoint found."""
     if not os.path.exists(checkpoint_dir):
         logging.error(f"Checkpoint directory '{checkpoint_dir}' does not exist.")
         return
@@ -359,21 +360,24 @@ def load_latest_checkpoint():
     if not checkpoints:
         logging.warning("No checkpoints available.")
         return
-    # Sort the checkpoints based on the training step number in their filenames
-    # Each checkpoint is 'step_i.pt', where i is the training step number
-    checkpoints.sort(key=lambda x: int(x.split('_')[1].split('.')[0]))
-    # Get the path of the latest checkpoint
-    latest_checkpoint = os.path.join(checkpoint_dir, checkpoints[-1])
+    if i and f'step_{i}.pt' in checkpoints:
+        cp = os.path.join(checkpoint_dir, f'step_{i}.pt')
+    else:
+        # Sort the checkpoints based on the training step number in their filenames
+        # Each checkpoint is 'step_i.pt', where i is the training step number
+        checkpoints.sort(key=lambda x: int(x.split('_')[1].split('.')[0]))
+        # Get the latest checkpoint
+        cp = os.path.join(checkpoint_dir, checkpoints[-1])
     # Load the checkpoint
-    logging.info(f"Loading the latest checkpoint, found at {latest_checkpoint}")
-    checkpoint = torch.load(latest_checkpoint)
+    logging.info(f"Loading checkpoint {cp}")
+    checkpoint = torch.load(cp)
     # Load the model and optimizer states
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])  # so we can resume training from the checkpoint
 
 
-# Uncomment to resume training from the latest checkpoint
-# load_latest_checkpoint()
+# Uncomment to resume training from a checkpoint
+# load_checkpoint()
 
 # wandb logging
 if wandb_log and master_process:
@@ -413,7 +417,7 @@ for i in range(max_iters):
     X, Y = get_batch('train')
     # backward pass, with gradient scaling if training in fp16
     scaler.scale(loss).backward()
-    # step the optimizer and scaler if training in fp16
+    # step the optimizer (and scaler if training in fp16)
     scaler.step(optimizer)
     scaler.update()
     # flush the gradients
