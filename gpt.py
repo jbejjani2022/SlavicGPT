@@ -15,7 +15,7 @@ split = 0.9  # the percentage of the dataset to be used for training - rest is u
 batch_size = 64  # the number of independent sequences that we will process in parallel
 block_size = 256  # maximum context length for predictions
 learning_rate = 3e-4
-max_iters = 6000  # number of training steps
+max_iters = 12000  # number of training steps
 eval_interval = 500  # how often to evaluate the loss
 eval_iters = 200  # number of batches to be evaluated during loss estimation
 save_interval = 1000  # how often to save a model checkpoint
@@ -308,6 +308,7 @@ if ddp:
 raw_model = model.module if ddp else model # unwrap DDP container if needed
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+# optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9)
 
 # Initialize GradScaler. If enabled=False, scaler is a no-op
 enabled = dtype == 'float16'
