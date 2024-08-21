@@ -12,25 +12,26 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 # set hyperparameters
 split = 0.9  # the percentage of the dataset to be used for training - rest is used for valdiation
-batch_size = 64  # the number of independent sequences that we will process in parallel
-block_size = 256  # maximum context length for predictions
-learning_rate = 3e-4
-max_iters = 12000  # number of training steps
-eval_interval = 500  # how often to evaluate the loss
+gradient_accumulation_steps = 32  # for simulating larger batch sizes under memory constraints
+batch_size = 12  # this is the micro-batch size if gradient_accumulation_steps > 1
+block_size = 1024  # maximum context length for predictions
+learning_rate = 6e-4
+max_iters = 200000  # number of training steps
+eval_interval = 2000  # how often to evaluate the loss
 eval_iters = 200  # number of batches to be evaluated during loss estimation
-save_interval = 1000  # how often to save a model checkpoint
-n_embd = 384  # number of embedding dimensions
-n_heads = 6  # number of self-attention heads per transformer block
-n_blocks = 6  # number of transformer blocks/layers
-dropout = 0.2  # dropout probability
-out = 'gpt.log' # output log filename
+save_interval = 10000  # how often to save a model checkpoint
+n_embd = 768  # number of embedding dimensions
+n_heads = 12  # number of self-attention heads per transformer block
+n_blocks = 12  # number of transformer blocks/layers
+dropout = 0.0  # dropout probability
+out = 'russ_large_minibatched.log' # output log filename
 wandb_log = True  # log to wandb
 wandb_project = 'gpt'
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 config = {k: globals()[k] for k in config_keys} # will be useful for wandb logging
-checkpoint_dir = "./checkpoints" # path to model checkpoints
-dataset = 'tinyshakespeare' # 'tinyrussianlit'
+checkpoint_dir = "./russ_large_minibatched_cp" # path to model checkpoints
+dataset = 'tinyrussianlit' # 'tinyshakespeare'
 
 # Configure logging to an output file
 logging.basicConfig(filename=out, 
@@ -66,6 +67,10 @@ if ddp:
     torch.cuda.set_device(device)
     master_process = ddp_rank == 0 # this process will do logging and checkpointing
     seed_offset = ddp_rank # each process gets a different seed
+    # world_size number of processes will be training simultaneously, so we
+    # scale down the gradient accumulation steps per process proportionally
+    assert gradient_accumulation_steps % ddp_world_size == 0
+    gradient_accumulation_steps //= ddp_world_size
 else:
     # if not ddp, we are running on one gpu, one process
     master_process = True
@@ -79,7 +84,7 @@ if master_process:
     logging.info(f'DDP run? {ddp}')
     logging.info(f'world size = {ddp_world_size}')
     logging.info(f'Using {dtype} data type')
-    tokens_per_iter = ddp_world_size * batch_size * block_size
+    tokens_per_iter = gradient_accumulation_steps * ddp_world_size * batch_size * block_size
     logging.info(f"There will be {tokens_per_iter:,} tokens per iteration, for {max_iters} iterations")
     
 logging.info(f"{device} initialized")
@@ -411,13 +416,20 @@ for i in range(max_iters):
     if master_process and (i + 1) % save_interval == 0:
         save_checkpoint(i)
     
-    with ctx:
-        logits, loss = model(X, Y)
-    
-    # immediately async prefetch next batch while model is doing the forward pass on the GPU
-    X, Y = get_batch('train')
-    # backward pass, with gradient scaling if training in fp16
-    scaler.scale(loss).backward()
+    # forward and backward update with optional gradient accumulation to simulate larger batch size
+    # and using GradScaler if dtype is float16
+    for micro_step in range(gradient_accumulation_steps):
+        if ddp:
+            # in DDP training we only need to sync gradients at the last micro step
+            model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
+        with ctx:
+            logits, loss = model(X, Y)
+            loss /= gradient_accumulation_steps  # scale the loss to account for gradient accumulation
+        # immediately async prefetch next batch while model is doing the forward pass on the GPU
+        X, Y = get_batch('train')
+        # backward pass, with gradient scaling if training in fp16
+        scaler.scale(loss).backward()
+        
     # step the optimizer (and scaler if training in fp16)
     scaler.step(optimizer)
     scaler.update()
