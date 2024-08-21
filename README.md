@@ -34,4 +34,4 @@ This is starting to look a lot more like Russian, but it is still pretty nonsens
 
 ### Acknowledgments
 
-Many thanks to Andrej Karpathy for his amazing [tutorial](https://www.youtube.com/watch?v=kCc8FmEb1nY) and [nanoGPT](https://github.com/karpathy/nanoGPT) repo, which helped me learn what I needed for this project.
+Many thanks to Andrej Karpathy for his amazing [tutorial](https://www.youtube.com/watch?v=kCc8FmEb1nY) and [nanoGPT](https://github.com/karpathy/nanoGPT) repo, which have taught me a lot as I work on this project.
