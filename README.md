@@ -10,7 +10,7 @@ Then, in `gpt.py`, I took what I learned to build a character-level, transformer
 
 My GPT for this experiment had ~10.8 million parameters.
 
-Given a newline character as the starting context, the untrained model (validation loss ~4.6) generated the following sample:
+Given a newline character as the starting context, the untrained model (with validation loss ~4.64) generated the following sample:
 ```
 Т?лШ:д&;Нбл-—уЁпЮчЧ;кМлИыАлЦІ:аьлЫрЫгбБдлчІЖЫБдБ—хХы?дАЪЉ!ы?кГЮ́д
 І!ДДХ
@@ -20,10 +20,18 @@ Given a newline character as the starting context, the untrained model (validati
 ```
 Gibberish!
 
-After training for 15 minutes on one A100 GPU and getting down to a validation loss of ~1.48, the model generated the following sample:
+After training for ~15 minutes (comprising 12,000 training steps) on one A100 GPU, the model got down to a validation loss of ~1.40 and generated the following sample:
 ```
-Как ли едет грубопытство, сделал этим правом на два днереже помок, должить в небо!
-Она наведливо одну и поохожала несколько в глаз, а ее мило особенно в кошки-с.
-Старик шгнул мартвы в церковь мой и дадущий и сердца разволял его. Дона и не видовала бы
+Кто-то сдал Катерин.
+Ах, совсем не надобится Чичиков
+На любовь!,
+И, высказал ему обоим расставшиеся от этого, отдал отректы, слоймуны, поднимувшиеся знакомые вам,
+на рубище, не об уставшей на бытую, но весело
+изъявил ей.
+Любовь, к своему важного учти
 ```
 This is starting to look a lot more like Russian, but it is still pretty nonsensical if you actually read (or try to translate) it. Nevertheless, this initial model has clearly learned some level of patterns and dependencies in the Russian language and how tokens 'communicate' across a sequence.
+
+### Acknowledgments
+
+Many thanks to Andrej Karpathy for his amazing [tutorial](https://www.youtube.com/watch?v=kCc8FmEb1nY) and [nanoGPT](https://github.com/karpathy/nanoGPT) repo, which helped me learn what I needed for this project.
