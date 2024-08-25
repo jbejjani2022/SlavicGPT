@@ -11,27 +11,27 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 
 # set hyperparameters
-split = 0.9  # the percentage of the dataset to be used for training - rest is used for valdiation
-gradient_accumulation_steps = 32  # for simulating larger batch sizes under memory constraints
-batch_size = 12  # this is the micro-batch size if gradient_accumulation_steps > 1
-block_size = 1024  # maximum context length for predictions
-learning_rate = 6e-4
-max_iters = 200000  # number of training steps
-eval_interval = 2000  # how often to evaluate the loss
+split = 0.9  # percentage of dataset used for training - rest is for validation
+gradient_accumulation_steps = 1  # for simulating larger batch sizes under memory constraints
+batch_size = 64  # if gradient_accumulation_steps > 1, this is the micro-batch size
+block_size = 256  # maximum context length for predictions
+learning_rate = 3e-4
+max_iters = 12000  # number of training steps
+eval_interval = 500  # how often to evaluate the loss
 eval_iters = 200  # number of batches to be evaluated during loss estimation
-save_interval = 10000  # how often to save a model checkpoint
-n_embd = 768  # number of embedding dimensions
-n_heads = 12  # number of self-attention heads per transformer block
-n_blocks = 12  # number of transformer blocks/layers
-dropout = 0.0  # dropout probability
-out = 'russ_large_minibatched.log' # output log filename
+save_interval = 1000  # how often to save a model checkpoint
+n_embd = 384  # number of embedding dimensions
+n_heads = 6  # number of self-attention heads per transformer block
+n_blocks = 6  # number of transformer blocks/layers
+dropout = 0.2  # dropout probability
+out = 'gpt.log' # output log filename
 wandb_log = True  # log to wandb
 wandb_project = 'gpt'
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16'
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 config = {k: globals()[k] for k in config_keys} # will be useful for wandb logging
-checkpoint_dir = "./russ_large_minibatched_cp" # path to model checkpoints
-dataset = 'tinyrussianlit' # 'tinyshakespeare'
+checkpoint_dir = "./checkpoints" # path to model checkpoints
+dataset = 'tinyshakespeare' # 'tinyrussianlit'
 
 # Configure logging to an output file
 logging.basicConfig(filename=out, 
